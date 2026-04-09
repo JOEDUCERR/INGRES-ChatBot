@@ -1,7 +1,7 @@
 # 💧 INGRES Groundwater AI Chatbot
 
 An AI-powered chatbot that allows users to query groundwater data using natural language.
-It converts user questions into SQL queries using an LLM and retrieves insights from a real groundwater dataset.
+It converts user questions into SQL queries using an LLM and retrieves deep insights from a real groundwater dataset.
 
 ---
 
