@@ -1,4 +1,5 @@
 import os
+import re
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -6,79 +7,136 @@ from langchain_openai import ChatOpenAI
 from langchain_community.utilities import SQLDatabase
 from langchain_community.agent_toolkits import create_sql_agent
 
-# Load DB
-db = SQLDatabase.from_uri("sqlite:///groundwater.db")
+DB_URI = "sqlite:///groundwater.db"
+MODEL = "gpt-4o-mini"
+MAX_ITERATIONS = 10
 
-# OpenAI LLM
-llm = ChatOpenAI(
-    model="gpt-4o-mini",   # or "gpt-4o"
-    temperature=0,
-    api_key=os.getenv("OPENAI_API_KEY")  # safer than hardcoding
-)
+# ─── DATABASE ────────────────────────────────────────────────
+db = SQLDatabase.from_uri(DB_URI)
 
-# SQL Agent
-agent_executor = create_sql_agent(
-    llm=llm,
-    db=db,
-    verbose=True,
-    handle_parsing_errors=True,
-    max_iterations=10
-)
+# ─── GET SCHEMA ──────────────────────────────────────────────
+def get_schema_hint(db: SQLDatabase) -> str:
+    try:
+        result = db.run('PRAGMA table_info(groundwater);')
+        rows = eval(result) if isinstance(result, str) else result
+        return "\n".join(f'- "{row[1]}"' for row in rows)
+    except Exception:
+        return "(schema unavailable)"
 
-def ask_database(question: str):
+SCHEMA_HINT = get_schema_hint(db)
 
-    prompt = f"""
+# ─── SYSTEM PROMPT (FIXED) ───────────────────────────────────
+SYSTEM_PROMPT = f"""
 You are a data analyst querying a SQLite groundwater database.
 
-Database table: groundwater
+STRICT RULES:
 
-CRITICAL SQL RULE 1: All column names MUST be wrapped in double quotes because they contain spaces and special characters.
+1. Table name: groundwater
 
-CRITICAL SQL RULE 2: STATE values are always UPPERCASE in the database (e.g. 'PUNJAB', 'RAJASTHAN', 'KERALA').
-Always convert state names to UPPERCASE in your WHERE clause using UPPER(), like:
-WHERE UPPER("STATE") = UPPER('Punjab')
+2. Columns:
+{SCHEMA_HINT}
 
-CRITICAL SQL RULE 3: YEAR values use underscores and full years, like '2022_23' becomes '2022_2023', '2016_17' becomes '2016_2017'.
-Always search YEAR using LIKE with the first year, like:
-WHERE "YEAR" LIKE '2022%'
-This handles any format the user types (2022-23, 2022_23, 2022-2023, etc.)
+3. NEVER use markdown (NO ```)
 
-Column names (always use exactly as shown, with double quotes):
-- "STATE"
-- "DISTRICT"
-- "Rainfall (mm)"
-- "Ground Water Recharge (ham)"
-- "Annual Ground water Recharge (ham)"
-- "Total Ground Water Availability in the area (ham)"
-- "Annual Extractable Ground water Resource (ham)"
-- "Ground Water Extraction for all uses (ha.m)"
-- "Stage of Ground Water Extraction (%)"
-- "Net Annual Ground Water Availability for Future Use (ham)"
-- "Environmental Flows (ham)"
-- "Total Geographical Area (ha)"
-- "YEAR"
+4. ALWAYS return ONLY raw SQL query
 
-Example of correct queries:
+5. IMPORTANT: Handle multi-year data:
+   - General questions → use AVG or MAX
+   - Avoid duplicate rows
+   - Use GROUP BY when needed
 
--- User asks: "Show rainfall for Punjab in 2022-23"
-SELECT "STATE", "DISTRICT", "Rainfall (mm)", "YEAR"
+6. Ignore NULL values:
+   → add WHERE column IS NOT NULL
+
+7. STATE is uppercase:
+   WHERE UPPER("STATE") = UPPER('Punjab')
+
+8. YEAR format:
+   WHERE "YEAR" LIKE '2022%'
+
+9. LIMIT 20 unless specified
+
+────────────────────
+EXAMPLES:
+
+-- Top districts by recharge
+SELECT "DISTRICT", MAX("Ground Water Recharge (ham)") AS recharge
+FROM groundwater
+GROUP BY "DISTRICT"
+ORDER BY recharge DESC
+LIMIT 5;
+
+-- Rainfall in Punjab
+SELECT "STATE", "DISTRICT", "Rainfall (mm)"
 FROM groundwater
 WHERE UPPER("STATE") = UPPER('Punjab')
 AND "YEAR" LIKE '2022%';
 
--- User asks: "Which state has highest ground water availability?"
-SELECT "STATE", MAX("Total Ground Water Availability in the area (ham)")
+-- Average extraction for a state (IMPORTANT)
+SELECT AVG("Stage of Ground Water Extraction (%)") AS avg_extraction
 FROM groundwater
-GROUP BY "STATE"
-ORDER BY 2 DESC
+WHERE UPPER("STATE") = UPPER('Rajasthan')
+AND "Stage of Ground Water Extraction (%)" IS NOT NULL;
+
+-- Top districts by extraction
+SELECT "DISTRICT",
+MAX("Stage of Ground Water Extraction (%)") AS extraction
+FROM groundwater
+WHERE UPPER("STATE") = UPPER('Rajasthan')
+AND "Stage of Ground Water Extraction (%)" IS NOT NULL
+GROUP BY "DISTRICT"
+ORDER BY extraction DESC
 LIMIT 5;
-
-User Question:
-{question}
-
-Generate the SQL query using the rules above, execute it, and return the answer clearly.
 """
 
-    response = agent_executor.invoke({"input": prompt})
 
-    return response["output"]
+
+# ─── LLM ─────────────────────────────────────────────────────
+llm = ChatOpenAI(
+    model=MODEL,
+    temperature=0,
+    api_key=os.getenv("OPENAI_API_KEY"),
+)
+
+# ─── CLEAN SQL (CRITICAL FIX) ────────────────────────────────
+def clean_sql(query: str) -> str:
+    query = re.sub(r"```sql", "", query, flags=re.IGNORECASE)
+    query = re.sub(r"```", "", query)
+    return query.strip()
+
+# ─── AGENT (NO AgentType → FIXED ERROR) ──────────────────────
+agent_executor = create_sql_agent(
+    llm=llm,
+    db=db,
+    verbose=True,
+    max_iterations=MAX_ITERATIONS,
+)
+
+# ─── MAIN FUNCTION ───────────────────────────────────────────
+def ask_database(question: str) -> str:
+    if not question or not question.strip():
+        return "Please provide a valid question."
+
+    if len(question) > 1000:
+        return "Question too long."
+
+    try:
+        full_input = f"{SYSTEM_PROMPT}\n\nUser Question:\n{question.strip()}"
+        response = agent_executor.invoke({"input": full_input})
+
+        output = response.get("output", "")
+
+        # Clean any markdown formatting
+        cleaned_output = clean_sql(output)
+
+        return cleaned_output if cleaned_output else "No result found."
+
+    except Exception as e:
+        print(f"[ask_database error] {type(e).__name__}: {e}")
+        return f"Error: {type(e).__name__}"
+
+
+# ─── TEST ────────────────────────────────────────────────────
+if __name__ == "__main__":
+    print(ask_database("Top 5 districts by ground water recharge"))
+

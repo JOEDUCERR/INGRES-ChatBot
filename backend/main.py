@@ -1,14 +1,23 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
 from pydantic import BaseModel
 from backend.chatbot import ask_database
+from backend.security import sanitize_input
 import sqlite3
 
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 
-
+# ─── RATE LIMIT ──────────────────────────────────────────────
+limiter = Limiter(key_func=get_remote_address)
 
 app = FastAPI(title="INGRES Groundwater Chatbot API")
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# ─── CORS ────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -17,13 +26,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-
-# request body for chatbot
+# ─── REQUEST MODEL ───────────────────────────────────────────
 class Question(BaseModel):
     question: str
 
-
-# helper function for manual SQL queries
+# ─── RAW QUERY EXECUTION (OPTIONAL API) ──────────────────────
 def run_query(query):
     conn = sqlite3.connect("groundwater.db")
     cursor = conn.cursor()
@@ -32,14 +39,12 @@ def run_query(query):
     conn.close()
     return rows
 
-
-# root endpoint
+# ─── HOME ────────────────────────────────────────────────────
 @app.get("/")
 def home():
     return {"message": "INGRES Groundwater Chatbot API Running"}
 
-
-# example SQL endpoint
+# ─── SAMPLE ENDPOINT ─────────────────────────────────────────
 @app.get("/top_states")
 def top_states():
     query = """
@@ -50,17 +55,25 @@ def top_states():
     ORDER BY 2 DESC
     LIMIT 10
     """
-    
     result = run_query(query)
-
     return {"result": result}
 
-
-# AI chatbot endpoint
+# ─── CHAT ENDPOINT ───────────────────────────────────────────
 @app.post("/chat")
-def chat(q: Question):
-    answer = ask_database(q.question)
-    return {
-        "question": q.question,
-        "answer": answer
-    }
+@limiter.limit("10/minute")
+def chat(request: Request, q: Question):
+    try:
+        clean_question = sanitize_input(q.question)
+
+        answer = ask_database(clean_question)
+
+        if not answer:
+            answer = "No data found."
+
+        return {
+            "question": clean_question,
+            "answer": answer
+        }
+
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
