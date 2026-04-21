@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Water drop shape -->
+  <defs>
+    <linearGradient id="waterGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#4FC3F7;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#0288D1;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  
+  <!-- Main water drop -->
+  <path 
+    fill="url(#waterGradient)" 
+    d="M32 4C32 4 14 28 14 42c0 9.941 8.059 18 18 18s18-8.059 18-18C50 28 32 4 32 4z"
+  />
+  
+  <!-- Highlight for shine effect -->
+  <ellipse 
+    cx="26" 
+    cy="30" 
+    rx="6" 
+    ry="10" 
+    fill="rgba(255,255,255,0.3)"
+  />
+</svg>
