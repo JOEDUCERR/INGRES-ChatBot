@@ -44,6 +44,102 @@ const QUICK_QUERIES = [
 let _id = 0
 const uid = () => `chat_${++_id}_${Date.now()}`
 
+// Multi-Select Dropdown Component
+function MultiSelectDropdown({ options, selected, onChange, placeholder, theme, searchable = true }) {
+  const [isOpen, setIsOpen] = useState(false)
+  const [searchTerm, setSearchTerm] = useState("")
+  const dropdownRef = useRef(null)
+  const colors = theme.colors
+
+  useEffect(() => {
+    const handleClickOutside = (e) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) {
+        setIsOpen(false)
+        setSearchTerm("")
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
+
+  const filteredOptions = searchable
+    ? options.filter(opt => opt.toLowerCase().includes(searchTerm.toLowerCase()))
+    : options
+
+  const toggleOption = (option) => {
+    if (selected.includes(option)) {
+      onChange(selected.filter(s => s !== option))
+    } else {
+      onChange([...selected, option])
+    }
+  }
+
+  const displayText = selected.length === 0
+    ? placeholder
+    : selected.length === 1
+    ? selected[0]
+    : `${selected.length} selected`
+
+  return (
+    <div ref={dropdownRef} className="relative">
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className={`w-full px-3 py-2 border rounded-lg ${colors.input} ${colors.inputFocus} text-sm text-left flex items-center justify-between transition-colors`}
+      >
+        <span className={selected.length === 0 ? colors.textTertiary : colors.text}>
+          {displayText}
+        </span>
+        <svg
+          className={`w-4 h-4 ${colors.textSecondary} transition-transform ${isOpen ? 'rotate-180' : ''}`}
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
+
+      {isOpen && (
+        <div className={`absolute z-50 w-full mt-1 ${colors.panel} border ${colors.border} rounded-lg shadow-xl max-h-64 overflow-hidden`}>
+          {searchable && (
+            <div className="p-2 border-b">
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Search..."
+                className={`w-full px-3 py-1.5 border rounded ${colors.input} text-sm`}
+                onClick={(e) => e.stopPropagation()}
+              />
+            </div>
+          )}
+          <div className="overflow-y-auto max-h-52">
+            {filteredOptions.length === 0 ? (
+              <div className={`p-3 text-sm ${colors.textTertiary} text-center`}>No options found</div>
+            ) : (
+              filteredOptions.map(option => (
+                <label
+                  key={option}
+                  className={`flex items-center gap-2 px-3 py-2 hover:${colors.listItem} cursor-pointer transition-colors`}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <input
+                    type="checkbox"
+                    checked={selected.includes(option)}
+                    onChange={() => toggleOption(option)}
+                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                  />
+                  <span className={`text-sm ${colors.text}`}>{option}</span>
+                </label>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function parseAnswer(text) {
   const numberedList = text.match(/\d+\.\s+.+/g)
   if (numberedList && numberedList.length >= 2) {
@@ -308,17 +404,9 @@ export default function App() {
     setSelectedYears([])
   }
 
-  const toggleState = (state) => {
-    setSelectedStates(prev =>
-      prev.includes(state) ? prev.filter(s => s !== state) : [...prev, state]
-    )
-  }
-
-  const toggleYear = (year) => {
-    setSelectedYears(prev =>
-      prev.includes(year) ? prev.filter(y => y !== year) : [...prev, year]
-    )
-  }
+  const resetMetric = () => setSelectedMetric("")
+  const resetStates = () => setSelectedStates([])
+  const resetYears = () => setSelectedYears([])
 
   return (
     <div className={`flex h-screen bg-gradient-to-br ${colors.bg} transition-colors duration-300`}>
@@ -342,72 +430,149 @@ export default function App() {
           {/* Metric Selector */}
           <div>
             <label className={`block text-sm font-semibold ${colors.text} mb-2`}>Metric</label>
-            <select
-              value={selectedMetric}
-              onChange={(e) => setSelectedMetric(e.target.value)}
-              className={`w-full px-3 py-2 border rounded-lg ${colors.input} ${colors.inputFocus} text-sm transition-colors`}
-            >
-              <option value="">Select metric...</option>
-              {METRICS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-            </select>
+            <div className="flex gap-2">
+              <select
+                value={selectedMetric}
+                onChange={(e) => setSelectedMetric(e.target.value)}
+                className={`flex-1 px-3 py-2 border rounded-lg ${colors.input} ${colors.inputFocus} text-sm transition-colors`}
+              >
+                <option value="">Select metric...</option>
+                {METRICS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+              </select>
+              <button
+                onClick={resetMetric}
+                disabled={!selectedMetric}
+                className={`px-3 py-2 border rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${colors.buttonSecondary}`}
+                title="Reset metric"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
           </div>
 
           {/* State Selector */}
           <div>
             <label className={`block text-sm font-semibold ${colors.text} mb-2`}>
-              States ({selectedStates.length} selected)
+              States {selectedStates.length > 0 && `(${selectedStates.length} selected)`}
             </label>
-            <div className={`max-h-48 overflow-y-auto border ${colors.border} rounded-lg p-2 space-y-1`}>
-              {STATES.map(state => (
-                <label key={state} className={`flex items-center gap-2 p-2 hover:${colors.listItem} rounded cursor-pointer transition-colors`}>
-                  <input
-                    type="checkbox"
-                    checked={selectedStates.includes(state)}
-                    onChange={() => toggleState(state)}
-                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className={`text-sm ${colors.text}`}>{state}</span>
-                </label>
-              ))}
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <MultiSelectDropdown
+                  options={STATES}
+                  selected={selectedStates}
+                  onChange={setSelectedStates}
+                  placeholder="Select states..."
+                  theme={theme}
+                  searchable={true}
+                />
+              </div>
+              <button
+                onClick={resetStates}
+                disabled={selectedStates.length === 0}
+                className={`px-3 py-2 border rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${colors.buttonSecondary}`}
+                title="Reset states"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
+            {selectedStates.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {selectedStates.map(state => (
+                  <span
+                    key={state}
+                    className={`inline-flex items-center gap-1 px-2 py-1 ${colors.badge} border rounded-full text-xs`}
+                  >
+                    {state.length > 15 ? state.slice(0, 15) + '...' : state}
+                    <button
+                      onClick={() => setSelectedStates(prev => prev.filter(s => s !== state))}
+                      className="hover:text-red-600 transition-colors"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
 
           {/* Year Selector */}
           <div>
             <label className={`block text-sm font-semibold ${colors.text} mb-2`}>
-              Years ({selectedYears.length} selected)
+              Years {selectedYears.length > 0 && `(${selectedYears.length} selected)`}
             </label>
-            <div className="space-y-1">
-              {YEARS.map(year => (
-                <label key={year} className={`flex items-center gap-2 p-2 hover:${colors.listItem} rounded cursor-pointer transition-colors`}>
-                  <input
-                    type="checkbox"
-                    checked={selectedYears.includes(year)}
-                    onChange={() => toggleYear(year)}
-                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
-                  />
-                  <span className={`text-sm ${colors.text}`}>{year.replace("_", "-")}</span>
-                </label>
-              ))}
+            <div className="flex gap-2">
+              <div className="flex-1">
+                <MultiSelectDropdown
+                  options={YEARS.map(y => y.replace("_", "-"))}
+                  selected={selectedYears.map(y => y.replace("_", "-"))}
+                  onChange={(years) => setSelectedYears(years.map(y => y.replace("-", "_")))}
+                  placeholder="Select years..."
+                  theme={theme}
+                  searchable={false}
+                />
+              </div>
+              <button
+                onClick={resetYears}
+                disabled={selectedYears.length === 0}
+                className={`px-3 py-2 border rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${colors.buttonSecondary}`}
+                title="Reset years"
+              >
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
             </div>
+            {selectedYears.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1">
+                {selectedYears.map(year => (
+                  <span
+                    key={year}
+                    className={`inline-flex items-center gap-1 px-2 py-1 ${colors.badge} border rounded-full text-xs`}
+                  >
+                    {year.replace("_", "-")}
+                    <button
+                      onClick={() => setSelectedYears(prev => prev.filter(y => y !== year))}
+                      className="hover:text-red-600 transition-colors"
+                    >
+                      <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
           </div>
+        </div>
 
-          {/* Action Buttons */}
-          <div className="space-y-2">
-            <button
-              onClick={runFilterQuery}
-              disabled={!selectedMetric}
-              className={`w-full py-3 ${colors.button} text-white font-semibold rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg`}
-            >
-              Run Query
-            </button>
-            <button
-              onClick={resetFilters}
-              className={`w-full py-2 ${colors.buttonSecondary} font-medium rounded-lg transition-colors text-sm`}
-            >
-              Reset Filters
-            </button>
-          </div>
+        {/* Action Buttons - Fixed at bottom */}
+        <div className={`p-6 border-t ${colors.border} space-y-2`}>
+          <button
+            onClick={runFilterQuery}
+            disabled={!selectedMetric}
+            className={`w-full py-3 ${colors.button} text-white font-semibold rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all shadow-md hover:shadow-lg flex items-center justify-center gap-2`}
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+            </svg>
+            Run Query
+          </button>
+          <button
+            onClick={resetFilters}
+            disabled={!selectedMetric && selectedStates.length === 0 && selectedYears.length === 0}
+            className={`w-full py-2 border rounded-lg font-medium transition-colors text-sm disabled:opacity-40 disabled:cursor-not-allowed ${colors.buttonSecondary} flex items-center justify-center gap-2`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            Reset All Filters
+          </button>
         </div>
       </div>
 
