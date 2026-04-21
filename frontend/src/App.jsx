@@ -81,16 +81,20 @@ function MultiSelectDropdown({ options, selected, onChange, placeholder, theme, 
     : `${selected.length} selected`
 
   return (
-    <div ref={dropdownRef} className="relative">
+    <div ref={dropdownRef} className="relative w-full">
       <button
         onClick={() => setIsOpen(!isOpen)}
         className={`w-full px-3 py-2 border rounded-lg ${colors.input} ${colors.inputFocus} text-sm text-left flex items-center justify-between transition-colors`}
+        title={selected.length === 1 ? selected[0] : displayText}
       >
-        <span className={selected.length === 0 ? colors.textTertiary : colors.text}>
+        <span 
+          className={`${selected.length === 0 ? colors.textTertiary : colors.text} truncate pr-2`}
+          style={{ maxWidth: 'calc(100% - 20px)' }}
+        >
           {displayText}
         </span>
         <svg
-          className={`w-4 h-4 ${colors.textSecondary} transition-transform ${isOpen ? 'rotate-180' : ''}`}
+          className={`w-4 h-4 ${colors.textSecondary} transition-transform flex-shrink-0 ${isOpen ? 'rotate-180' : ''}`}
           fill="none"
           stroke="currentColor"
           viewBox="0 0 24 24"
@@ -127,9 +131,9 @@ function MultiSelectDropdown({ options, selected, onChange, placeholder, theme, 
                     type="checkbox"
                     checked={selected.includes(option)}
                     onChange={() => toggleOption(option)}
-                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500"
+                    className="w-4 h-4 text-blue-600 rounded focus:ring-2 focus:ring-blue-500 flex-shrink-0"
                   />
-                  <span className={`text-sm ${colors.text}`}>{option}</span>
+                  <span className={`text-sm ${colors.text} truncate`} title={option}>{option}</span>
                 </label>
               ))
             )}
@@ -259,27 +263,138 @@ function BotMessage({ text, theme }) {
   )
 }
 
-function DataTable({ data, metric, theme }) {
+function DataTable({ data, metric, theme, onDownload }) {
   if (!data || data.length === 0) return null
   const colors = theme.colors
   
+  // Get unit from metric name - improved extraction
+  const getUnit = (metricName) => {
+    if (!metricName) return ''
+    if (metricName.includes('(mm)')) return 'mm'
+    if (metricName.includes('(ha.m)')) return 'ha.m'
+    if (metricName.includes('(ham)')) return 'ham'
+    if (metricName.includes('(ha)')) return 'ha'
+    if (metricName.includes('(%)')) return '%'
+    return ''
+  }
+  
+  const unit = getUnit(metric)
+  
+  // Check if this is multi-year data
+  const isMultiYear = data.some(row => row.year)
+  
+  // For multi-year data, create pivot table
+  if (isMultiYear) {
+    const states = [...new Set(data.map(row => row.state))]
+    const years = [...new Set(data.map(row => row.year))].sort()
+    
+    const pivotData = states.map(state => {
+      const stateData = { state }
+      let total = 0
+      years.forEach(year => {
+        const row = data.find(d => d.state === state && d.year === year)
+        const value = row ? row.value : 0
+        stateData[year] = value
+        total += value
+      })
+      stateData.total = total
+      return stateData
+    })
+    
+    return (
+      <div className={`mt-4 ${colors.panel} border ${colors.border} rounded-xl overflow-hidden`}>
+        {/* Download Button */}
+        <div className={`px-4 py-3 border-b ${colors.border} flex items-center justify-between`}>
+          <div className={`text-sm font-semibold ${colors.text}`}>
+            Query Results ({pivotData.length} states, {years.length} years)
+          </div>
+          <button
+            onClick={onDownload}
+            className={`flex items-center gap-2 px-3 py-1.5 ${colors.button} text-white text-sm font-medium rounded-lg hover:shadow-md transition-all`}
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Download Excel
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-max">
+            <thead className={`${colors.listItem} border-b ${colors.border}`}>
+              <tr>
+                <th className={`px-4 py-3 text-left text-xs font-semibold ${colors.text} uppercase tracking-wider sticky left-0 ${colors.listItem} z-10`}>
+                  State
+                </th>
+                {years.map(year => (
+                  <th key={year} className={`px-4 py-3 text-right text-xs font-semibold ${colors.text} uppercase tracking-wider whitespace-nowrap`}>
+                    {year.replace('_', '-')} {unit && `(${unit})`}
+                  </th>
+                ))}
+                <th className={`px-4 py-3 text-right text-xs font-bold ${colors.text} uppercase tracking-wider bg-blue-50 dark:bg-blue-900/20 whitespace-nowrap`}>
+                  Total {unit && `(${unit})`}
+                </th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {pivotData.map((row, i) => (
+                <tr key={i} className="hover:bg-opacity-50 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors">
+                  <td className={`px-4 py-3 text-sm font-medium ${colors.text} sticky left-0 ${colors.panel} border-r z-10`}>
+                    {row.state}
+                  </td>
+                  {years.map(year => (
+                    <td key={year} className={`px-4 py-3 text-sm ${colors.text} text-right whitespace-nowrap`}>
+                      {row[year] ? `${row[year].toLocaleString(undefined, {maximumFractionDigits: 2})} ${unit}` : '-'}
+                    </td>
+                  ))}
+                  <td className={`px-4 py-3 text-sm font-bold ${colors.text} text-right bg-blue-50 dark:bg-blue-900/20 whitespace-nowrap`}>
+                    {row.total.toLocaleString(undefined, {maximumFractionDigits: 2})} {unit}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )
+  }
+  
+  // Single year table
   return (
     <div className={`mt-4 ${colors.panel} border ${colors.border} rounded-xl overflow-hidden`}>
+      {/* Download Button */}
+      <div className={`px-4 py-3 border-b ${colors.border} flex items-center justify-between`}>
+        <div className={`text-sm font-semibold ${colors.text}`}>
+          Query Results ({data.length} states)
+        </div>
+        <button
+          onClick={onDownload}
+          className={`flex items-center gap-2 px-3 py-1.5 ${colors.button} text-white text-sm font-medium rounded-lg hover:shadow-md transition-all`}
+        >
+          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+          </svg>
+          Download Excel
+        </button>
+      </div>
       <div className="overflow-x-auto">
         <table className="w-full">
           <thead className={`${colors.listItem} border-b ${colors.border}`}>
             <tr>
               <th className={`px-4 py-3 text-left text-xs font-semibold ${colors.text} uppercase tracking-wider`}>State</th>
               {data[0].year && <th className={`px-4 py-3 text-left text-xs font-semibold ${colors.text} uppercase tracking-wider`}>Year</th>}
-              <th className={`px-4 py-3 text-right text-xs font-semibold ${colors.text} uppercase tracking-wider`}>Value</th>
+              <th className={`px-4 py-3 text-right text-xs font-semibold ${colors.text} uppercase tracking-wider`}>
+                Value {unit && `(${unit})`}
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-200">
             {data.map((row, i) => (
-              <tr key={i} className="hover:bg-opacity-50 hover:bg-gray-50 transition-colors">
-                <td className={`px-4 py-3 text-sm ${colors.text}`}>{row.state}</td>
+              <tr key={i} className="hover:bg-opacity-50 hover:bg-gray-50 dark:hover:bg-gray-800/30 transition-colors">
+                <td className={`px-4 py-3 text-sm font-medium ${colors.text}`}>{row.state}</td>
                 {row.year && <td className={`px-4 py-3 text-sm ${colors.textSecondary}`}>{row.year.replace('_', '-')}</td>}
-                <td className={`px-4 py-3 text-sm font-medium ${colors.text} text-right`}>{row.value.toLocaleString(undefined, {maximumFractionDigits: 2})}</td>
+                <td className={`px-4 py-3 text-sm font-medium ${colors.text} text-right whitespace-nowrap`}>
+                  {row.value.toLocaleString(undefined, {maximumFractionDigits: 2})} {unit}
+                </td>
               </tr>
             ))}
           </tbody>
@@ -347,6 +462,37 @@ export default function App() {
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send() }
   }
 
+  const downloadExcel = async (data, metric, states, years) => {
+    try {
+      const res = await axios.post(`${BACKEND}/export_excel`, {
+        metric,
+        states,
+        years,
+        data
+      }, {
+        responseType: 'blob'
+      })
+      
+      // Create download link
+      const url = window.URL.createObjectURL(new Blob([res.data]))
+      const link = document.createElement('a')
+      link.href = url
+      
+      // Generate filename
+      const timestamp = new Date().toISOString().slice(0, 10)
+      const metricShort = metric.split('(')[0].trim().replace(/\s+/g, '_').toLowerCase()
+      link.setAttribute('download', `groundwater_${metricShort}_${timestamp}.xlsx`)
+      
+      document.body.appendChild(link)
+      link.click()
+      link.remove()
+      window.URL.revokeObjectURL(url)
+    } catch (error) {
+      console.error('Download error:', error)
+      alert('Failed to download Excel file. Please try again.')
+    }
+  }
+
   const runFilterQuery = async () => {
     if (!selectedMetric) {
       alert("Please select a metric")
@@ -375,7 +521,13 @@ export default function App() {
           id: uid(),
           data: res.data.data,
           metric: res.data.metric,
-          queryType: res.data.query_type
+          queryType: res.data.query_type,
+          // Store query params for download
+          queryParams: {
+            metric: selectedMetric,
+            states: selectedStates,
+            years: selectedYears
+          }
         }
         setMessages(prev => [...prev, botMsg])
       } else {
@@ -430,19 +582,28 @@ export default function App() {
           {/* Metric Selector */}
           <div>
             <label className={`block text-sm font-semibold ${colors.text} mb-2`}>Metric</label>
-            <div className="flex gap-2">
-              <select
-                value={selectedMetric}
-                onChange={(e) => setSelectedMetric(e.target.value)}
-                className={`flex-1 px-3 py-2 border rounded-lg ${colors.input} ${colors.inputFocus} text-sm transition-colors`}
-              >
-                <option value="">Select metric...</option>
-                {METRICS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-              </select>
+            <div className="flex gap-2 items-start">
+              <div className="flex-1 min-w-0">
+                <select
+                  value={selectedMetric}
+                  onChange={(e) => setSelectedMetric(e.target.value)}
+                  className={`w-full px-3 py-2 border rounded-lg ${colors.input} ${colors.inputFocus} text-sm transition-colors`}
+                  style={{
+                    maxWidth: '100%',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap'
+                  }}
+                  title={selectedMetric ? METRICS.find(m => m.value === selectedMetric)?.label : "Select metric..."}
+                >
+                  <option value="">Select metric...</option>
+                  {METRICS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+                </select>
+              </div>
               <button
                 onClick={resetMetric}
                 disabled={!selectedMetric}
-                className={`px-3 py-2 border rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${colors.buttonSecondary}`}
+                className={`flex-shrink-0 w-10 h-10 border rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${colors.buttonSecondary} flex items-center justify-center`}
                 title="Reset metric"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -457,8 +618,8 @@ export default function App() {
             <label className={`block text-sm font-semibold ${colors.text} mb-2`}>
               States {selectedStates.length > 0 && `(${selectedStates.length} selected)`}
             </label>
-            <div className="flex gap-2">
-              <div className="flex-1">
+            <div className="flex gap-2 items-start">
+              <div className="flex-1 min-w-0">
                 <MultiSelectDropdown
                   options={STATES}
                   selected={selectedStates}
@@ -471,7 +632,7 @@ export default function App() {
               <button
                 onClick={resetStates}
                 disabled={selectedStates.length === 0}
-                className={`px-3 py-2 border rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${colors.buttonSecondary}`}
+                className={`flex-shrink-0 w-10 h-10 border rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${colors.buttonSecondary} flex items-center justify-center`}
                 title="Reset states"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -486,10 +647,12 @@ export default function App() {
                     key={state}
                     className={`inline-flex items-center gap-1 px-2 py-1 ${colors.badge} border rounded-full text-xs`}
                   >
-                    {state.length > 15 ? state.slice(0, 15) + '...' : state}
+                    <span className="truncate max-w-[120px]" title={state}>
+                      {state.length > 15 ? state.slice(0, 15) + '...' : state}
+                    </span>
                     <button
                       onClick={() => setSelectedStates(prev => prev.filter(s => s !== state))}
-                      className="hover:text-red-600 transition-colors"
+                      className="hover:text-red-600 transition-colors flex-shrink-0"
                     >
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -506,8 +669,8 @@ export default function App() {
             <label className={`block text-sm font-semibold ${colors.text} mb-2`}>
               Years {selectedYears.length > 0 && `(${selectedYears.length} selected)`}
             </label>
-            <div className="flex gap-2">
-              <div className="flex-1">
+            <div className="flex gap-2 items-start">
+              <div className="flex-1 min-w-0">
                 <MultiSelectDropdown
                   options={YEARS.map(y => y.replace("_", "-"))}
                   selected={selectedYears.map(y => y.replace("_", "-"))}
@@ -520,7 +683,7 @@ export default function App() {
               <button
                 onClick={resetYears}
                 disabled={selectedYears.length === 0}
-                className={`px-3 py-2 border rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${colors.buttonSecondary}`}
+                className={`flex-shrink-0 w-10 h-10 border rounded-lg text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${colors.buttonSecondary} flex items-center justify-center`}
                 title="Reset years"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -538,7 +701,7 @@ export default function App() {
                     {year.replace("_", "-")}
                     <button
                       onClick={() => setSelectedYears(prev => prev.filter(y => y !== year))}
-                      className="hover:text-red-600 transition-colors"
+                      className="hover:text-red-600 transition-colors flex-shrink-0"
                     >
                       <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
@@ -621,7 +784,7 @@ export default function App() {
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-6">
-          <div className="max-w-4xl mx-auto space-y-6">
+          <div className="max-w-6xl mx-auto space-y-6">
             {messages.length === 0 && (
               <div className="text-center py-12">
                 <div className={`w-16 h-16 mx-auto mb-4 rounded-2xl ${colors.avatar} flex items-center justify-center shadow-lg`}>
@@ -652,7 +815,7 @@ export default function App() {
                     <span className="text-white text-xs font-bold">AI</span>
                   </div>
                 )}
-                <div className={`max-w-2xl p-4 rounded-2xl ${
+                <div className={`${msg.role === 'user' ? 'max-w-2xl' : 'w-full max-w-[1100px]'} p-4 rounded-2xl ${
                   msg.role === 'user'
                     ? `${colors.userMessage}`
                     : `${colors.botMessage} border shadow-sm`
@@ -660,7 +823,19 @@ export default function App() {
                   {msg.role === 'bot' ? (
                     <>
                       <BotMessage text={msg.text} theme={theme} />
-                      {msg.data && <DataTable data={msg.data} metric={msg.metric} theme={theme} />}
+                      {msg.data && (
+                        <DataTable 
+                          data={msg.data} 
+                          metric={msg.metric} 
+                          theme={theme}
+                          onDownload={() => downloadExcel(
+                            msg.data, 
+                            msg.queryParams?.metric || msg.metric,
+                            msg.queryParams?.states || [],
+                            msg.queryParams?.years || []
+                          )}
+                        />
+                      )}
                     </>
                   ) : (
                     <span className="whitespace-pre-wrap">{msg.text}</span>
@@ -694,7 +869,7 @@ export default function App() {
 
         {/* Input Area */}
         <div className={`${colors.panel} border-t ${colors.border} p-4 shadow-lg`}>
-          <div className="max-w-4xl mx-auto flex gap-3">
+          <div className="max-w-6xl mx-auto flex gap-3">
             <textarea
               ref={textareaRef}
               value={question}

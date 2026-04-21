@@ -130,9 +130,12 @@ def generate_sql(params: Dict[str, Any]) -> str:
     # Get aggregation function
     agg_func = AGG_RULES.get(metric, "SUM")
     
+    # CRITICAL: Detect multi-year query
+    is_multi_year = len(years) > 1
+    
     # Base query
     if query_type == "ranking_top" or query_type == "ranking_bottom":
-        # Ranking query
+        # Ranking query (always single year)
         year = years[0] if years else "2024_25"
         order = "DESC" if query_type == "ranking_top" else "ASC"
         
@@ -159,37 +162,44 @@ def generate_sql(params: Dict[str, Any]) -> str:
         ORDER BY value DESC
         '''
     
-    elif len(states) > 0 and len(years) > 0:
-        # Specific states and years
-        state_list = "', '".join(states)
+    elif is_multi_year:
+        # MULTI-YEAR MODE: Always return year-wise breakdown
+        state_list = "', '".join([s.upper() for s in states]) if states else None
         year_list = "', '".join(years)
         
-        if len(years) == 1:
-            # Single year
-            sql = f'''
-            SELECT "STATE", {agg_func}("{metric}") AS value
-            FROM groundwater
-            WHERE UPPER("STATE") IN ('{state_list}')
-            AND "YEAR" = '{years[0]}'
-            AND "{metric}" IS NOT NULL
-            GROUP BY "STATE"
-            ORDER BY "STATE"
-            '''
+        if states:
+            state_filter = f"AND UPPER(\"STATE\") IN ('{state_list}')"
         else:
-            # Multiple years - return year-wise
-            sql = f'''
-            SELECT "STATE", "YEAR", {agg_func}("{metric}") AS value
-            FROM groundwater
-            WHERE UPPER("STATE") IN ('{state_list}')
-            AND "YEAR" IN ('{year_list}')
-            AND "{metric}" IS NOT NULL
-            GROUP BY "STATE", "YEAR"
-            ORDER BY "STATE", "YEAR"
-            '''
+            state_filter = ""
+        
+        # CRITICAL: GROUP BY STATE, YEAR (never aggregate across years)
+        sql = f'''
+        SELECT "STATE", "YEAR", {agg_func}("{metric}") AS value
+        FROM groundwater
+        WHERE "YEAR" IN ('{year_list}')
+        AND "{metric}" IS NOT NULL
+        {state_filter}
+        GROUP BY "STATE", "YEAR"
+        ORDER BY "STATE", "YEAR"
+        '''
+    
+    elif len(states) > 0 and len(years) == 1:
+        # Single year, specific states
+        state_list = "', '".join([s.upper() for s in states])
+        
+        sql = f'''
+        SELECT "STATE", {agg_func}("{metric}") AS value
+        FROM groundwater
+        WHERE UPPER("STATE") IN ('{state_list}')
+        AND "YEAR" = '{years[0]}'
+        AND "{metric}" IS NOT NULL
+        GROUP BY "STATE"
+        ORDER BY "STATE"
+        '''
     
     elif len(states) > 0:
         # States specified, use latest year
-        state_list = "', '".join(states)
+        state_list = "', '".join([s.upper() for s in states])
         
         sql = f'''
         SELECT "STATE", {agg_func}("{metric}") AS value
@@ -233,7 +243,7 @@ def execute_sql(sql: str) -> List[tuple]:
 
 
 def format_results(results: List[tuple], params: Dict[str, Any]) -> str:
-    """Format query results into natural language."""
+    """Format query results into natural language with units always included."""
     if not results:
         return "No data available for the selected query parameters."
     
@@ -251,6 +261,10 @@ def format_results(results: List[tuple], params: Dict[str, Any]) -> str:
     if not metric_name:
         metric_name = metric
     
+    # Ensure unit is always present (fallback if not found)
+    if not unit:
+        unit = ""
+    
     # Format based on query type
     if query_type in ["ranking_top", "ranking_bottom"]:
         # Ranking format
@@ -260,7 +274,9 @@ def format_results(results: List[tuple], params: Dict[str, Any]) -> str:
         
         lines = [f"Top states by {metric_name} in {year_display}:"]
         for i, (state, value) in enumerate(results, 1):
-            lines.append(f"{i}. {state.title()}: {value:,.2f} {unit}")
+            # Always include unit, even if empty string
+            value_str = f"{value:,.2f} {unit}".strip()
+            lines.append(f"{i}. {state.title()}: {value_str}")
         
         return "\n".join(lines)
     
@@ -270,7 +286,8 @@ def format_results(results: List[tuple], params: Dict[str, Any]) -> str:
         year = params["years"][0] if params["years"] else "2024-25"
         year_display = year.replace("_", "-")
         
-        return f"The {metric_name} in {state.title()} in {year_display} is {value:,.2f} {unit}."
+        value_str = f"{value:,.2f} {unit}".strip()
+        return f"The {metric_name} in {state.title()} in {year_display} is {value_str}."
     
     elif len(results[0]) == 3:
         # Multi-year results (state, year, value)
@@ -285,7 +302,8 @@ def format_results(results: List[tuple], params: Dict[str, Any]) -> str:
                 current_state = state
             
             year_display = year.replace("_", "-")
-            lines.append(f"  - {year_display}: {value:,.2f} {unit}")
+            value_str = f"{value:,.2f} {unit}".strip()
+            lines.append(f"  - {year_display}: {value_str}")
         
         return "\n".join(lines)
     
@@ -296,7 +314,8 @@ def format_results(results: List[tuple], params: Dict[str, Any]) -> str:
         
         lines = [f"{metric_name.title()} in {year_display}:"]
         for state, value in results:
-            lines.append(f"  - {state.title()}: {value:,.2f} {unit}")
+            value_str = f"{value:,.2f} {unit}".strip()
+            lines.append(f"  - {state.title()}: {value_str}")
         
         return "\n".join(lines)
 
